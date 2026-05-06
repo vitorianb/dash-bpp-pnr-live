@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BPP Loss · PNR Driver Monitor</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'IBM Plex Sans', sans-serif; background: #0a0e1a; color: #e2e8f0; min-height: 100vh; padding: 24px; }
+
+  .loading-screen {
+    position: fixed; inset: 0; background: #0a0e1a;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    z-index: 999; gap: 16px;
+  }
+  .loading-screen.hidden { display: none; }
+  .loading-title { font-family: 'IBM Plex Mono', monospace; font-size: 16px; color: #64b3f4; }
+  .loading-sub { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #3b6ba5; }
+  .spinner {
+    width: 32px; height: 32px;
+    border: 2px solid #1a2840;
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .error-screen {
+    display: none; position: fixed; inset: 0; background: #0a0e1a;
+    align-items: center; justify-content: center; flex-direction: column; gap: 12px; z-index: 998;
+  }
+  .error-screen.show { display: flex; }
+  .error-msg { font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #f87171; }
+  .error-sub { font-size: 12px; color: #5a7a9a; }
+  .retry-btn { background: rgba(59,130,246,0.15); border: 1px solid #3b82f6; color: #60a5fa; font-family: 'IBM Plex Mono', monospace; font-size: 12px; padding: 8px 20px; border-radius: 6px; cursor: pointer; margin-top: 8px; }
+  .retry-btn:hover { background: rgba(59,130,246,0.3); }
+
+  .header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 28px; border-bottom: 1px solid #1e2d4a; padding-bottom: 20px; }
+  .header-left h1 { font-family: 'IBM Plex Mono', monospace; font-size: 20px; font-weight: 700; color: #f0f6ff; }
+  .header-left .subtitle { font-size: 12px; color: #5a7a9a; margin-top: 4px; font-family: 'IBM Plex Mono', monospace; }
+  .header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+  .badge-date { background: #111827; border: 1px solid #1e3a5f; border-radius: 6px; padding: 6px 12px; font-size: 11px; color: #64b3f4; font-family: 'IBM Plex Mono', monospace; }
+  .refresh-btn { background: rgba(59,130,246,0.1); border: 1px solid #1e3a5f; border-radius: 6px; padding: 5px 12px; font-size: 11px; color: #3b82f6; font-family: 'IBM Plex Mono', monospace; cursor: pointer; transition: all 0.15s; }
+  .refresh-btn:hover { background: rgba(59,130,246,0.2); border-color: #3b82f6; }
+
+  .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 24px; }
+  .kpi-card { background: #0f1724; border: 1px solid #1a2840; border-radius: 10px; padding: 16px 18px; position: relative; overflow: hidden; }
+  .kpi-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; border-radius: 10px 10px 0 0; }
+  .kpi-card.red::before { background: linear-gradient(90deg, #ef4444, #f97316); }
+  .kpi-card.orange::before { background: linear-gradient(90deg, #f97316, #fbbf24); }
+  .kpi-card.blue::before { background: linear-gradient(90deg, #3b82f6, #8b5cf6); }
+  .kpi-label { font-size: 10px; color: #5a7a9a; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+  .kpi-value { font-family: 'IBM Plex Mono', monospace; font-size: 26px; font-weight: 700; color: #f0f6ff; line-height: 1; }
+  .kpi-sub { font-size: 11px; color: #4a6480; margin-top: 6px; }
+  .kpi-alert { display: inline-block; background: rgba(239,68,68,0.15); color: #f87171; font-size: 10px; padding: 2px 7px; border-radius: 4px; margin-top: 6px; font-family: 'IBM Plex Mono', monospace; }
+
+  .section-title { font-family: 'IBM Plex Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: #3b6ba5; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+  .section-title::after { content: ''; flex: 1; height: 1px; background: #1a2840; }
+
+  .main-grid { display: grid; grid-template-columns: 1fr 380px; gap: 16px; margin-bottom: 16px; }
+  .panel { background: #0f1724; border: 1px solid #1a2840; border-radius: 10px; padding: 18px; }
+
+  .driver-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .driver-table th { text-align: left; font-family: 'IBM Plex Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #3b6ba5; padding: 8px 10px; border-bottom: 1px solid #1a2840; white-space: nowrap; cursor: pointer; user-select: none; }
+  .driver-table th:hover { color: #64b3f4; }
+  .driver-table td { padding: 9px 10px; border-bottom: 1px solid #0d1520; vertical-align: middle; }
+  .driver-table tr:last-child td { border-bottom: none; }
+  .driver-table tr:hover td { background: rgba(59,107,165,0.06); }
+  .driver-id { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #64b3f4; }
+  .driver-mlp { font-size: 11px; color: #94a3b8; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+  .bpp-value { font-family: 'IBM Plex Mono', monospace; font-weight: 600; }
+  .bpp-high { color: #f87171; }
+  .bpp-mid { color: #fbbf24; }
+  .bpp-low { color: #4ade80; }
+  .cr-bar-wrap { display: flex; align-items: center; gap: 6px; }
+  .cr-bar { height: 4px; border-radius: 2px; background: #1a2840; width: 60px; overflow: hidden; }
+  .cr-bar-fill { height: 100%; border-radius: 2px; background: linear-gradient(90deg, #3b82f6, #ef4444); }
+  .cr-text { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #94a3b8; min-width: 36px; }
+  .exp-badge { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .exp-novato { background: rgba(251,191,36,0.15); color: #fbbf24; }
+  .exp-exp { background: rgba(59,130,246,0.15); color: #60a5fa; }
+  .action-btn { background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.3); color: #f87171; font-size: 10px; padding: 4px 9px; border-radius: 5px; cursor: pointer; font-family: 'IBM Plex Mono', monospace; transition: all 0.15s; white-space: nowrap; }
+  .action-btn:hover { background: rgba(239,68,68,0.22); border-color: rgba(239,68,68,0.6); }
+
+  .risk-item { border: 1px solid #1a2840; border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; position: relative; overflow: hidden; }
+  .risk-item::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; border-radius: 8px 0 0 8px; }
+  .risk-critical::before { background: #ef4444; }
+  .risk-high::before { background: #f97316; }
+  .risk-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .risk-title { font-size: 12px; font-weight: 600; color: #e2e8f0; }
+  .risk-tag { font-family: 'IBM Plex Mono', monospace; font-size: 10px; padding: 2px 7px; border-radius: 4px; }
+  .tag-critical { background: rgba(239,68,68,0.18); color: #f87171; }
+  .tag-high { background: rgba(249,115,22,0.18); color: #fb923c; }
+  .risk-detail { font-size: 11px; color: #5a7a9a; line-height: 1.5; }
+  .risk-metric { font-family: 'IBM Plex Mono', monospace; color: #94a3b8; }
+
+  .bar-chart { display: flex; align-items: flex-end; gap: 8px; height: 90px; padding-top: 20px; }
+  .bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; justify-content: flex-end; }
+  .bar-fill { width: 100%; border-radius: 3px 3px 0 0; min-height: 4px; }
+  .bar-label { font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #3b6ba5; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 48px; }
+  .bar-val { font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #64b3f4; margin-bottom: 2px; }
+
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: #0f1724; border: 1px solid #1e3a5f; border-radius: 12px; padding: 24px; width: 480px; max-width: 95vw; position: relative; }
+  .modal-title { font-family: 'IBM Plex Mono', monospace; font-size: 14px; font-weight: 700; color: #f0f6ff; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #1a2840; }
+  .modal-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #0d1520; font-size: 12px; }
+  .modal-row:last-of-type { border-bottom: none; }
+  .modal-key { color: #5a7a9a; }
+  .modal-val { font-family: 'IBM Plex Mono', monospace; color: #e2e8f0; font-weight: 600; }
+  .modal-action-area { margin-top: 16px; padding-top: 16px; border-top: 1px solid #1a2840; }
+  .modal-action-title { font-size: 11px; color: #3b6ba5; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; font-family: 'IBM Plex Mono', monospace; }
+  .action-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+  .action-list li { background: #111827; border: 1px solid #1a2840; border-radius: 6px; padding: 8px 12px; font-size: 12px; color: #94a3b8; display: flex; align-items: flex-start; gap: 8px; }
+  .action-list li::before { content: '\2192'; color: #3b82f6; font-family: 'IBM Plex Mono', monospace; flex-shrink: 0; }
+  .close-btn { position: absolute; top: 16px; right: 16px; background: none; border: none; color: #3b6ba5; font-size: 18px; cursor: pointer; line-height: 1; }
+  .close-btn:hover { color: #f87171; }
+
+  .filter-row { display: flex; gap: 8px; margin-bottom: 14px; align-items: center; flex-wrap: wrap; }
+  .filter-btn { background: #111827; border: 1px solid #1a2840; color: #5a7a9a; font-size: 11px; padding: 4px 12px; border-radius: 5px; cursor: pointer; font-family: 'IBM Plex Mono', monospace; transition: all 0.15s; }
+  .filter-btn.active, .filter-btn:hover { background: rgba(59,107,165,0.2); border-color: #3b6ba5; color: #64b3f4; }
+  .claims-count { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #fbbf24; }
+
+  .table-wrap { overflow-x: auto; max-height: 380px; overflow-y: auto; }
+  .table-wrap::-webkit-scrollbar { width: 4px; height: 4px; }
+  .table-wrap::-webkit-scrollbar-track { background: #0a0e1a; }
+  .table-wrap::-webkit-scrollbar-thumb { background: #1e3a5f; border-radius: 2px; }
+
+  .live-dot { width: 7px; height: 7px; border-radius: 50%; background: #4ade80; display: inline-block; margin-right: 5px; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+</style>
+</head>
+<body>
+
+<div class="loading-screen" id="loadingScreen">
+  <div class="spinner"></div>
+  <div class="loading-title">Carregando dados...</div>
+  <div class="loading-sub">Buscando planilha ao vivo</div>
+</div>
+
+<div class="error-screen" id="errorScreen">
+  <div class="error-msg">&#x26A0; Erro ao carregar dados</div>
+  <div class="error-sub" id="errorMsg">Verifique se a planilha está publicada como CSV</div>
+  <button class="retry-btn" onclick="loadData()">Tentar novamente</button>
+</div>
+
+<div id="appContent" style="display:none">
+  <div class="header">
+    <div class="header-left">
+      <h1>&#x1F6A8; BPP Loss &middot; PNR Driver Monitor</h1>
+      <div class="subtitle">CLAIM_TYPE: PNR CONTRADICTORIO RECTIFICADO &middot; <span class="live-dot"></span><span id="lastUpdate">carregando...</span></div>
+    </div>
+    <div class="header-right">
+      <div class="badge-date" id="refDate">MLB</div>
+      <button class="refresh-btn" onclick="loadData()">&#x21BB; Atualizar</button>
+    </div>
+  </div>
+
+  <div class="kpi-row" id="kpiRow"></div>
+
+  <div class="main-grid">
+    <div class="panel">
+      <div class="section-title">Drivers &middot; Ranking de Perda BPP (90 dias)</div>
+      <div class="filter-row">
+        <button class="filter-btn active" onclick="filterTable('all', this)">Todos</button>
+        <button class="filter-btn" onclick="filterTable('critico', this)">&#x1F534; Crítico (&gt;R$300)</button>
+        <button class="filter-btn" onclick="filterTable('alto', this)">&#x1F7E0; Alto (R$100-300)</button>
+        <button class="filter-btn" onclick="filterTable('novato', this)">Novato</button>
+      </div>
+      <div class="table-wrap">
+        <table class="driver-table">
+          <thead>
+            <tr>
+              <th onclick="sortBy('driver')">Driver ID</th>
+              <th>MLP</th>
+              <th>Exp.</th>
+              <th onclick="sortBy('shp90')">Envios 90d</th>
+              <th onclick="sortBy('cl90')">Claims 90d</th>
+              <th onclick="sortBy('cr90')">CR% 90d</th>
+              <th onclick="sortBy('bpp90')">BPP CO R$ 90d &#x25BC;</th>
+              <th onclick="sortBy('cl2w')">Claims 2s</th>
+              <th onclick="sortBy('bpp2w')">BPP CO R$ 2s</th>
+              <th>Ação</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel" style="margin-bottom:14px">
+        <div class="section-title">Acionáveis Prioritários</div>
+        <div id="riskPanel"></div>
+      </div>
+      <div class="panel">
+        <div class="section-title">Top 6 &middot; BPP CO R$ (90d)</div>
+        <div class="bar-chart" id="barChart"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <button class="close-btn" onclick="closeModal()">&#x2715;</button>
+    <div class="modal-title" id="modalTitle"></div>
+    <div id="modalContent"></div>
+    <div class="modal-action-area">
+      <div class="modal-action-title">Ações recomendadas</div>
+      <ul class="action-list" id="modalActions"></ul>
+    </div>
+  </div>
+</div>
+
+<script>
+const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQMAQ4thfKkv6377oW3DenczNNXc_tBVIjBfCQYCJxWrL6iihyoNlSrh2b0Lp_2KaIvLyR9V7eeJgu4/pub?output=csv';
+
+let data = [];
+let sortKey = 'bpp90';
+let sortDir = -1;
+let currentFilter = 'all';
+
+// ── CSV PARSER ────────────────────────────────────────────────────────
+function parseCSV(text) {
+  const lines = text.trim().split('\n');
+  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g,''));
+  return lines.slice(1).map(line => {
+    const vals = [];
+    let cur = '', inQ = false;
+    for(let ch of line) {
+      if(ch==='"') { inQ=!inQ; }
+      else if(ch===',' && !inQ) { vals.push(cur.trim()); cur=''; }
+      else cur+=ch;
+    }
+    vals.push(cur.trim());
+    const obj = {};
+    headers.forEach((h,i) => obj[h] = vals[i] || '');
+    return obj;
+  });
+}
+
+function n(v) { return parseFloat(v) || 0; }
+
+function processRows(rows) {
+  const seen = {};
+  rows.forEach(r => {
+    const id = r['DRIVER_ID'];
+    if(!id) return;
+    const bpp90 = n(r['DRIVER_BPP_CO_LC_LAST_90_DAYS']);
+    if(!seen[id] || seen[id].bpp90 < bpp90) {
+      seen[id] = {
+        driver: id,
+        mlp: r['MLP_NAME'] || '—',
+        exp: (r['EXPERIENCE'] || '').toUpperCase(),
+        shp90: n(r['DRIVER_SHIPMENTS_LAST_90_DAYS']),
+        cl90: n(r['DRIVER_CLAIMS_LAST_90_DAYS']),
+        cr90: n(r['DRIVER_CR_LAST_90_DAYS']),
+        bpp90: bpp90,
+        shp2w: n(r['DRIVER_SHIPMENTS_LAST_2_WEEKS']),
+        cl2w: n(r['DRIVER_CLAIMS_LAST_2_WEEKS']),
+        cr2w: n(r['DRIVER_CR_LAST_2_WEEKS']),
+        bpp2w: n(r['DRIVER_BPP_CO_LC_LAST_2_WEEKS']),
+      };
+    }
+  });
+  return Object.values(seen).sort((a,b) => b.bpp90 - a.bpp90);
+}
+
+// ── LOAD ──────────────────────────────────────────────────────────────
+async function loadData() {
+  document.getElementById('loadingScreen').classList.remove('hidden');
+  document.getElementById('errorScreen').classList.remove('show');
+  document.getElementById('appContent').style.display = 'none';
+
+  try {
+    const res = await fetch(CSV_URL + '&t=' + Date.now());
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    const text = await res.text();
+    const rows = parseCSV(text);
+    data = processRows(rows);
+
+    if(data.length === 0) throw new Error('Nenhum dado encontrado na planilha');
+
+    document.getElementById('loadingScreen').classList.add('hidden');
+    document.getElementById('appContent').style.display = 'block';
+
+    const now = new Date();
+    document.getElementById('lastUpdate').textContent = 'Atualizado ' + now.toLocaleTimeString('pt-BR');
+    document.getElementById('refDate').textContent = now.toLocaleDateString('pt-BR') + ' · MLB';
+
+    renderAll();
+  } catch(e) {
+    document.getElementById('loadingScreen').classList.add('hidden');
+    document.getElementById('errorScreen').classList.add('show');
+    document.getElementById('errorMsg').textContent = e.message;
+  }
+}
+
+function renderAll() {
+  renderKPIs();
+  renderTable(currentFilter);
+  renderRisk();
+  renderBar();
+}
+
+// ── KPIs ──────────────────────────────────────────────────────────────
+function renderKPIs() {
+  const totalBPP = data.reduce((s,d)=>s+d.bpp90,0);
+  const totalBPP2w = data.reduce((s,d)=>s+d.bpp2w,0);
+  const criticos = data.filter(d=>d.bpp90>=300).length;
+  const totalClaims = data.reduce((s,d)=>s+d.cl90,0);
+  const kpis = [
+    {label:"BPP Total 90d (R$)", value:"R$"+totalBPP.toLocaleString('pt-BR',{maximumFractionDigits:0}), sub:data.length+" drivers mapeados", cls:"red", alert:"Perda Acumulada"},
+    {label:"BPP Total 2 semanas (R$)", value:"R$"+totalBPP2w.toLocaleString('pt-BR',{maximumFractionDigits:0}), sub:"Janela recente", cls:"orange", alert:"Tendência atual"},
+    {label:"Drivers Críticos (≥R$300)", value:criticos, sub:"Perda acima do threshold", cls:"red", alert:"Ação imediata"},
+    {label:"Total Claims 90d", value:totalClaims, sub:"PNR Contraditório Rect.", cls:"blue", alert:null},
+  ];
+  document.getElementById('kpiRow').innerHTML = kpis.map(k=>
+    '<div class="kpi-card '+k.cls+'">'+
+    '<div class="kpi-label">'+k.label+'</div>'+
+    '<div class="kpi-value">'+k.value+'</div>'+
+    (k.alert?'<div class="kpi-alert">'+k.alert+'</div>':'')+
+    '<div class="kpi-sub">'+k.sub+'</div>'+
+    '</div>'
+  ).join('');
+}
+
+// ── TABLE ─────────────────────────────────────────────────────────────
+function getRisk(d) {
+  if(d.bpp90>=300) return 'critico';
+  if(d.bpp90>=100) return 'alto';
+  return 'baixo';
+}
+
+function renderTable(filter) {
+  let rows = [...data];
+  if(filter==='critico') rows = rows.filter(d=>d.bpp90>=300);
+  else if(filter==='alto') rows = rows.filter(d=>d.bpp90>=100&&d.bpp90<300);
+  else if(filter==='novato') rows = rows.filter(d=>d.exp==='NOVATO');
+  rows.sort((a,b) => sortDir*(a[sortKey]>b[sortKey]?1:-1));
+  const crMax = Math.max(...data.map(d=>d.cr90)) || 1;
+  document.getElementById('tableBody').innerHTML = rows.map(d=>{
+    const risk=getRisk(d);
+    const bppC=risk==='critico'?'bpp-high':risk==='alto'?'bpp-mid':'bpp-low';
+    const bpp2C=d.bpp2w>=300?'bpp-high':d.bpp2w>=100?'bpp-mid':'bpp-low';
+    const crW=Math.round((d.cr90/crMax)*100);
+    const expC=d.exp==='NOVATO'?'exp-novato':'exp-exp';
+    const expL=d.exp==='NOVATO'?'Novato':'Exp.';
+    return '<tr>'+
+      '<td><span class="driver-id">#'+d.driver+'</span></td>'+
+      '<td><span class="driver-mlp" title="'+d.mlp+'">'+d.mlp+'</span></td>'+
+      '<td><span class="exp-badge '+expC+'">'+expL+'</span></td>'+
+      '<td style="font-family:\'IBM Plex Mono\',monospace;font-size:11px;color:#64b3f4">'+d.shp90.toLocaleString()+'</td>'+
+      '<td><span class="claims-count">'+d.cl90+'</span></td>'+
+      '<td><div class="cr-bar-wrap"><div class="cr-bar"><div class="cr-bar-fill" style="width:'+crW+'%"></div></div><span class="cr-text">'+((d.cr90*100).toFixed(1))+'%</span></div></td>'+
+      '<td><span class="bpp-value '+bppC+'">R$'+d.bpp90.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'</span></td>'+
+      '<td style="font-family:\'IBM Plex Mono\',monospace;font-size:11px;color:'+(d.cl2w>0?'#fbbf24':'#94a3b8')+'">'+d.cl2w+'</td>'+
+      '<td><span class="bpp-value '+bpp2C+'">R$'+d.bpp2w.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'</span></td>'+
+      '<td><button class="action-btn" onclick="openModal(\''+d.driver+'\')">Ver ação</button></td>'+
+      '</tr>';
+  }).join('');
+}
+
+function filterTable(f, btn) {
+  currentFilter = f;
+  document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  renderTable(f);
+}
+
+function sortBy(key) {
+  if(sortKey===key) sortDir*=-1;
+  else { sortKey=key; sortDir=-1; }
+  renderTable(currentFilter);
+}
+
+// ── RISK ──────────────────────────────────────────────────────────────
+function renderRisk() {
+  const top = data.filter(d=>d.bpp90>=300).slice(0,4);
+  let html = '';
+  top.forEach(d=>{
+    html+='<div class="risk-item risk-critical">'+
+      '<div class="risk-header"><span class="risk-title">#'+d.driver+' · '+d.mlp+'</span><span class="risk-tag tag-critical">CRÍTICO</span></div>'+
+      '<div class="risk-detail"><span class="risk-metric">BPP 90d: R$'+d.bpp90.toLocaleString('pt-BR',{minimumFractionDigits:2})+'</span> · CR: '+((d.cr90*100).toFixed(1))+'% · '+d.cl90+' claims | 2s: R$'+d.bpp2w.toLocaleString('pt-BR',{minimumFractionDigits:2})+'</div>'+
+      '</div>';
+  });
+  const esc = data.filter(d=>d.bpp2w>=300&&d.bpp90<300).slice(0,2);
+  esc.forEach(d=>{
+    html+='<div class="risk-item risk-high">'+
+      '<div class="risk-header"><span class="risk-title">#'+d.driver+' · '+d.mlp+'</span><span class="risk-tag tag-high">ESCALANDO</span></div>'+
+      '<div class="risk-detail"><span class="risk-metric">BPP 2s: R$'+d.bpp2w.toLocaleString('pt-BR',{minimumFractionDigits:2})+'</span> · Crescendo nas últimas 2 semanas</div>'+
+      '</div>';
+  });
+  if(!html) html='<div style="color:#3b6ba5;font-size:12px;text-align:center;padding:20px">Nenhum driver crítico no período</div>';
+  document.getElementById('riskPanel').innerHTML = html;
+}
+
+// ── BAR ───────────────────────────────────────────────────────────────
+function renderBar() {
+  const top6 = data.slice(0,6);
+  const max = Math.max(...top6.map(d=>d.bpp90)) || 1;
+  const colors = ['#ef4444','#f97316','#f97316','#fbbf24','#fbbf24','#3b82f6'];
+  document.getElementById('barChart').innerHTML = top6.map((d,i)=>{
+    const h = Math.max(4, Math.round((d.bpp90/max)*60));
+    return '<div class="bar-col">'+
+      '<div class="bar-val">'+d.bpp90.toLocaleString('pt-BR',{maximumFractionDigits:0})+'</div>'+
+      '<div class="bar-fill" style="height:'+h+'px;background:'+colors[i]+';opacity:0.85"></div>'+
+      '<div class="bar-label">#'+String(d.driver).slice(-5)+'</div>'+
+      '</div>';
+  }).join('');
+}
+
+// ── MODAL ─────────────────────────────────────────────────────────────
+function openModal(driverId) {
+  const d = data.find(x=>x.driver===driverId);
+  if(!d) return;
+  const actions = [];
+  if(d.cr90>0.15) actions.push('Auditar rotas com maior concentração de claims');
+  if(d.bpp2w>200) actions.push('Acionar gestor do MLP — BPP das últimas 2 semanas acima de R$200');
+  if(d.exp==='NOVATO') actions.push('Reforçar treinamento de entrega — driver novato');
+  if(d.cl90>=5) actions.push('Avaliar bloqueio preventivo até conclusão da apuração');
+  actions.push('Verificar geolocalização das entregas vs. endereço do comprador');
+  if(d.bpp90>500) actions.push('Escalar para time de investigação — perda acima de R$500');
+  if(d.cl2w>0) actions.push('Claims ativos nas últimas 2 semanas — monitorar com prioridade');
+
+  document.getElementById('modalTitle').textContent = 'Driver #'+d.driver+' · '+d.mlp;
+  document.getElementById('modalContent').innerHTML =
+    '<div class="modal-row"><span class="modal-key">Experiência</span><span class="modal-val">'+d.exp+'</span></div>'+
+    '<div class="modal-row"><span class="modal-key">Envios 90d</span><span class="modal-val">'+d.shp90.toLocaleString()+'</span></div>'+
+    '<div class="modal-row"><span class="modal-key">Claims 90d</span><span class="modal-val">'+d.cl90+'</span></div>'+
+    '<div class="modal-row"><span class="modal-key">CR% 90d</span><span class="modal-val" style="color:'+(d.cr90>0.15?'#f87171':'#4ade80')+'">'+((d.cr90*100).toFixed(2))+'%</span></div>'+
+    '<div class="modal-row"><span class="modal-key">BPP CO R$ 90d</span><span class="modal-val" style="color:#f87171">R$ '+d.bpp90.toLocaleString('pt-BR',{minimumFractionDigits:2})+'</span></div>'+
+    '<div class="modal-row"><span class="modal-key">Envios 2 semanas</span><span class="modal-val">'+d.shp2w.toLocaleString()+'</span></div>'+
+    '<div class="modal-row"><span class="modal-key">Claims 2 semanas</span><span class="modal-val">'+d.cl2w+'</span></div>'+
+    '<div class="modal-row"><span class="modal-key">BPP CO R$ 2s</span><span class="modal-val" style="color:'+(d.bpp2w>200?'#f87171':'#fbbf24')+'">R$ '+d.bpp2w.toLocaleString('pt-BR',{minimumFractionDigits:2})+'</span></div>';
+
+  document.getElementById('modalActions').innerHTML = actions.map(a=>'<li>'+a+'</li>').join('');
+  document.getElementById('modal').classList.add('open');
+}
+
+function closeModal() { document.getElementById('modal').classList.remove('open'); }
+document.getElementById('modal').addEventListener('click', e=>{ if(e.target===document.getElementById('modal')) closeModal(); });
+
+// ── INIT ──────────────────────────────────────────────────────────────
+loadData();
+// Auto-refresh a cada 5 minutos
+setInterval(loadData, 5 * 60 * 1000);
+</script>
+</body>
+</html>
